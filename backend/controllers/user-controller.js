@@ -1,7 +1,8 @@
 import User from "../model/User.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-
+import MailSender from "../mailSender.js";
+import moment from "moment";
 const JWT_SECRET_KEY = "SECRET";
 
 // req
@@ -31,18 +32,32 @@ const signUp = async (req, res, next) => {
   // ============================Create a new user=================================
   const user = new User({
     name, //name : name
-    email,
+    email: email.toLowerCase(),
     password: bcrypt.hashSync(password), //Send the password encrypted
   });
 
   try {
     // Save the new user in the database
     await user.save();
+
+    // Retrieve the mail from the database
+    const userMail = await User.findOne({ email: email.toLowerCase() });
+    // Otherwise we can also use just 'email' from req.body
+
+    // console.log(userMail.email, typeof userMail.email);
+    // Send the user a mail from the system
+    new MailSender(
+      [userMail.email],
+      moment().add(5, "s").format(),
+      "Administrator",
+      "admin"
+    ).sendEmail();
   } catch (err) {
     // If there is an error occured while saving to the database log it to the console
     console.log(err);
   }
 
+  // Reg Success
   return res.status(201).json({ mesaage: user });
 };
 
@@ -54,7 +69,7 @@ const login = async (req, res, next) => {
 
   let existingUser; //to check whether , is there an already available user
   try {
-    existingUser = await User.findOne({ email: email });
+    existingUser = await User.findOne({ email: email.toLowerCase() });
   } catch (err) {
     return new Error(err);
   }
@@ -70,12 +85,23 @@ const login = async (req, res, next) => {
 
   //   If the password is invalid
   if (!isPasswordCorrect) {
-    return res.status(400).json({ mesaage: "Invalid Credentials" });
+    return res
+      .status(400)
+      .json({ mesaage: "username and password does not match!" });
   }
 
   //Create a token for the logged user
   const token = jwt.sign({ id: existingUser._id }, JWT_SECRET_KEY, {
-    expiresIn: "1hr",
+    expiresIn: "30s",
+  });
+
+  // Creating a cookie
+  res.cookie(String(existingUser._id), token, {
+    path: "/",
+    expires: new Date(Date.now() + 1000 * 30), //Create a cookie valid only for 30secs
+    // maxAge: 1000 * 30,
+    httpOnly: true,
+    sameSite: "lax",
   });
 
   //   If the password is correct
@@ -87,8 +113,11 @@ const login = async (req, res, next) => {
 // =============================================================================================
 // ============================Verify Token======================================
 const verifyToken = async (req, res, next) => {
-  const bearerHeader = req.headers["authorization"];
-  const bearerToken = bearerHeader.split(" ")[1]; //bearerHeader = bearer + token
+  const cookieReceived = req.headers.cookie;
+  //console.log(cookieReceived); //We get user.id=token as the cookie , so we need to split it by = sign
+  // Get the first index then we will get the token
+  const bearerToken = cookieReceived.split("=")[1];
+  console.log(bearerToken);
 
   //   If the token is not available
   if (!bearerToken) {
